@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Generator/Generator.csproj" />
+  <Project Path="Shared/Shared.csproj" />
+  <Project Path="Sorter/Sorter.csproj" />
+  <Project Path="Tests/Tests.csproj" />
+</Solution>
