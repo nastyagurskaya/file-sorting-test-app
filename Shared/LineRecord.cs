@@ -5,15 +5,14 @@ namespace Shared;
 /// <summary>
 /// One line of the file in parsed form: "Number. Text", e.g. "415. Apple".
 /// </summary>
-public readonly struct LineRecord(long number, string text)
+public readonly struct LineRecord(int number, string text)
 {
-    public long Number { get; } = number;
+    public int Number { get; } = number;
 
     public string Text { get; } = text;
 
     public const string Separator = ". ";
 
-    // Try-pattern, not exceptions: malformed lines are expected input that the caller skips and logs.
     public static bool TryParse(string? line, out LineRecord record)
     {
         record = default;
@@ -30,16 +29,15 @@ public readonly struct LineRecord(long number, string text)
             return false;
         }
 
-        if (!long.TryParse(
+        if (!int.TryParse(
                 line.AsSpan(0, separatorIndex),
                 NumberStyles.None,
                 CultureInfo.InvariantCulture,
-                out long number))
+                out int number))
         {
             return false;
         }
 
-        // An empty text part ("415. ") is treated as well-formed.
         record = new LineRecord(number, line[(separatorIndex + Separator.Length)..]);
         return true;
     }
