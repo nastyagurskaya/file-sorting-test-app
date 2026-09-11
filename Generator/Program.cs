@@ -1,4 +1,5 @@
 using Generator;
+using Shared;
 
 string? output = null;
 string? size = null;
@@ -25,32 +26,12 @@ for (int i = 0; valid && i < args.Length; i += 2)
     }
 }
 
-if (!valid || output is null || size is null || !TryParseSize(size, out long sizeBytes))
+if (!valid || output is null || size is null || !SizeParser.TryParse(size, out long sizeBytes))
 {
     Console.Error.WriteLine("Usage: Generator --output <path> --size <bytes|10KB|100MB|2GB> [--seed <int>]");
     return 1;
 }
 
-(long lines, long bytes) = new FileGenerator(new GeneratorOptions(output, sizeBytes, seed)).Generate();
-Console.WriteLine($"Wrote {lines:N0} lines, {bytes:N0} bytes to {output}{(seed is null ? "" : $" (seed {seed})")}.");
+GenerationResult result = new FileGenerator(new GeneratorOptions(output, sizeBytes, seed)).Generate();
+Console.WriteLine($"Wrote {result.LinesWritten:N0} lines, {result.BytesWritten:N0} bytes to {output}{(seed is null ? "" : $" (seed {seed})")}.");
 return 0;
-
-static bool TryParseSize(string value, out long bytes)
-{
-    bytes = 0;
-    value = value.Trim().ToUpperInvariant();
-
-    long multiplier = value switch
-    {
-        _ when value.EndsWith("GB") => 1024L * 1024 * 1024,
-        _ when value.EndsWith("MB") => 1024L * 1024,
-        _ when value.EndsWith("KB") => 1024L,
-        _ => 1L
-    };
-
-    string number = multiplier == 1 ? value : value[..^2];
-    if (!long.TryParse(number, out long n) || n <= 0) return false;
-
-    bytes = n * multiplier;
-    return true;
-}

@@ -5,6 +5,8 @@ namespace Generator;
 
 record GeneratorOptions(string Output, long SizeBytes, int? Seed);
 
+record GenerationResult(long LinesWritten, long BytesWritten);
+
 sealed class FileGenerator(GeneratorOptions options)
 {
     const int BufferSize = 1024 * 1024;
@@ -14,7 +16,7 @@ sealed class FileGenerator(GeneratorOptions options)
     // No seed means a different file on every run; a seed makes the output reproducible.
     readonly Random random = options.Seed is int seed ? new Random(seed) : new Random();
 
-    public (long Lines, long Bytes) Generate()
+    public GenerationResult Generate()
     {
         using StreamWriter writer = new(options.Output, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), BufferSize);
 
@@ -26,14 +28,14 @@ sealed class FileGenerator(GeneratorOptions options)
         // Stops at the first line that reaches the target, so the file may overshoot by one line.
         while (bytes < options.SizeBytes)
         {
-            var line = $"{NextNumber()}{LineRecord.Separator}{TextPool[random.Next(TextPool.Length)]}";
+            var line = new LineRecord(NextNumber(), TextPool[random.Next(TextPool.Length)]).ToString();
             var byteLength = Encoding.UTF8.GetByteCount(line);
             writer.WriteLine(line);
             bytes += byteLength + 1;
             lines++;
         }
 
-        return (lines, bytes);
+        return new GenerationResult(lines, bytes);
     }
 
     int NextNumber() => random.Next(1, 100000);
