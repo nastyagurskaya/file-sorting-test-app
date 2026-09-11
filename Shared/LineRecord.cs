@@ -41,4 +41,6 @@ public readonly struct LineRecord(int number, string text)
         record = new LineRecord(number, line[(separatorIndex + Separator.Length)..]);
         return true;
     }
+
+    public override string ToString() => $"{Number}{Separator}{Text}";
 }
