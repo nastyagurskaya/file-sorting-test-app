@@ -32,6 +32,6 @@ if (!valid || output is null || size is null || !SizeParser.TryParse(size, out l
     return 1;
 }
 
-GenerationResult result = new FileGenerator(new GeneratorOptions(output, sizeBytes, seed)).Generate();
+var result = new FileGenerator(new GeneratorOptions(output, sizeBytes, seed)).Generate();
 Console.WriteLine($"Wrote {result.LinesWritten:N0} lines, {result.BytesWritten:N0} bytes to {output}{(seed is null ? "" : $" (seed {seed})")}.");
 return 0;

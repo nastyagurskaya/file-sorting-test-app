@@ -2,10 +2,6 @@ using Shared;
 using Sorter;
 
 const long DefaultChunkSize = 64L * 1024 * 1024;
-
-// Benchmarked on a 10-core machine sorting 2GB: speedup plateaus at 4 workers (33.6s at 4 vs 34.9s
-// at 10) while peak RSS keeps climbing (3.17GB at 4 vs 4.37GB at 10) — past 4, more workers cost
-// memory without buying speed. --workers overrides this for anyone who wants more anyway.
 const int DefaultMaxWorkers = 4;
 
 string? input = null;
@@ -52,6 +48,12 @@ if (!File.Exists(input))
     return 1;
 }
 
-SortResult result = new ExternalSorter(new SorterOptions(input, output, temp, chunkSize, workers)).Sort();
-Console.WriteLine($"Sorted {result.LinesWritten:N0} lines from {result.RunCount:N0} runs to {output} on {workers} workers, skipped {result.LinesSkipped:N0} malformed lines.");
+var result = new ExternalSorter(new SorterOptions(input, output, temp, chunkSize, workers)).Sort();
+Console.WriteLine($"Sorted {result.LinesWritten:N0} lines from {result.RunCount:N0} runs to {output} on {workers} workers.");
+
+if (result.LinesSkipped > 0)
+{
+    Console.WriteLine($"Skipped {result.LinesSkipped:N0} malformed lines");
+}
+
 return 0;
