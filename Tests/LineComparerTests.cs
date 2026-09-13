@@ -40,7 +40,7 @@ public class LineComparerTests
         LineRecord upper = new(1, "Apple");
         LineRecord lower = new(1, "apple");
 
-        // Ordinal puts every uppercase letter before every lowercase one; 
+        // Ordinal puts every uppercase letter before every lowercase one.
         Assert.True(LineComparer.Instance.Compare(upper, lower) < 0);
     }
 

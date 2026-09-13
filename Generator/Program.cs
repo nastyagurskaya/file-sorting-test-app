@@ -4,9 +4,9 @@ using Shared;
 string? output = null;
 string? size = null;
 int? seed = null;
-bool valid = args.Length % 2 == 0;
+var valid = args.Length % 2 == 0;
 
-for (int i = 0; valid && i < args.Length; i += 2)
+for (var i = 0; valid && i < args.Length; i += 2)
 {
     switch (args[i])
     {
@@ -17,8 +17,11 @@ for (int i = 0; valid && i < args.Length; i += 2)
             size = args[i + 1];
             break;
         case "--seed":
-            valid = int.TryParse(args[i + 1], out int parsedSeed);
-            if (valid) seed = parsedSeed;
+            valid = int.TryParse(args[i + 1], out var parsedSeed);
+            if (valid)
+            {
+                seed = parsedSeed;
+            }
             break;
         default:
             valid = false;
@@ -26,7 +29,7 @@ for (int i = 0; valid && i < args.Length; i += 2)
     }
 }
 
-if (!valid || output is null || size is null || !SizeParser.TryParse(size, out long sizeBytes))
+if (!valid || output is null || size is null || !SizeParser.TryParse(size, out var sizeBytes))
 {
     Console.Error.WriteLine("Usage: Generator --output <path> --size <bytes|10KB|100MB|2GB> [--seed <int>]");
     return 1;

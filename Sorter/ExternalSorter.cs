@@ -22,14 +22,14 @@ record SortResult(long LinesWritten, long LinesSkipped, int RunCount, int MergeP
 
 sealed class ExternalSorter(SorterOptions options)
 {
-    static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
     const int BufferSize = 1024 * 1024;
     const int ChannelCapacity = 2;
+
+    static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
     long skipped;
     int mergePasses;
     int nextRunIndex;
-    string NextRunPath() => Path.Combine(options.TempFolder, $"run-{nextRunIndex++:D5}.tmp");
 
     public SortResult Sort()
     {
@@ -42,8 +42,8 @@ sealed class ExternalSorter(SorterOptions options)
         try
         {
             SplitAsync(runFiles).GetAwaiter().GetResult();
-            int runCount = runFiles.Count;
-            long lines = Merge(runFiles);
+            var runCount = runFiles.Count;
+            var lines = Merge(runFiles);
 
             return new SortResult(lines, skipped, runCount, mergePasses);
         }
@@ -70,13 +70,13 @@ sealed class ExternalSorter(SorterOptions options)
 
         var workers = new Task[workerCount];
 
-        for (int i = 0; i < workerCount; i++)
+        for (var i = 0; i < workerCount; i++)
         {
             workers[i] = Task.Run(async () =>
             {
                 try
                 {
-                    await foreach ((string path, List<LineRecord> records) in channel.Reader.ReadAllAsync())
+                    await foreach (var (path, records) in channel.Reader.ReadAllAsync())
                     {
                         WriteChunk(records, path);
                         records.Clear();
@@ -116,7 +116,7 @@ sealed class ExternalSorter(SorterOptions options)
         {
             while ((line = reader.ReadLine()) is not null)
             {
-                if (!LineRecord.TryParse(line, out LineRecord record))
+                if (!LineRecord.TryParse(line, out var record))
                 {
                     skipped++;
                     continue;
@@ -128,7 +128,7 @@ sealed class ExternalSorter(SorterOptions options)
                 if (chunkBytes >= options.ChunkSizeBytes)
                 {
                     await HandOverAsync(writer, chunk, runFiles);
-                    chunk = freeBuffers.TryRead(out List<LineRecord>? recycled) ? recycled : [];
+                    chunk = freeBuffers.TryRead(out var recycled) ? recycled : [];
                     chunkBytes = 0;
                 }
             }
@@ -146,10 +146,12 @@ sealed class ExternalSorter(SorterOptions options)
 
     async Task HandOverAsync(ChannelWriter<(string Path, List<LineRecord> Records)> writer, List<LineRecord> chunk, List<string> runFiles)
     {
-        string path = NextRunPath();
+        var path = NextRunPath();
         runFiles.Add(path);
         await writer.WriteAsync((path, chunk));
     }
+
+    string NextRunPath() => Path.Combine(options.TempFolder, $"run-{nextRunIndex++:D5}.tmp");
 
     void WriteChunk(List<LineRecord> chunk, string path)
     {
@@ -175,9 +177,9 @@ sealed class ExternalSorter(SorterOptions options)
             mergePasses++;
             string[] passInputs = [.. runFiles];
 
-            for (int start = 0; start < passInputs.Length; start += options.MergeFactor)
+            for (var start = 0; start < passInputs.Length; start += options.MergeFactor)
             {
-                string[] group = passInputs[start..Math.Min(start + options.MergeFactor, passInputs.Length)];
+                var group = passInputs[start..Math.Min(start + options.MergeFactor, passInputs.Length)];
                 var merged = NextRunPath();
                 runFiles.Add(merged);
 
@@ -185,7 +187,7 @@ sealed class ExternalSorter(SorterOptions options)
 
                 // Delete inputs as soon as they are merged: keeps temp at ~1x the data, and keeps
                 // runFiles equal to what is on disk for Sort's cleanup.
-                foreach (string input in group)
+                foreach (var input in group)
                 {
                     File.Delete(input);
                     runFiles.Remove(input);
@@ -205,11 +207,11 @@ sealed class ExternalSorter(SorterOptions options)
         {
             using StreamWriter writer = new(outputPath, append: false, Utf8NoBom, BufferSize);
 
-            for (int i = 0; i < inputs.Count; i++)
+            for (var i = 0; i < inputs.Count; i++)
             {
                 readers.Add(new StreamReader(inputs[i], Utf8NoBom, detectEncodingFromByteOrderMarks: false, BufferSize));
 
-                if (TryReadRecord(readers[i], inputs[i], out LineRecord record))
+                if (TryReadRecord(readers[i], inputs[i], out var record))
                 {
                     queue.Enqueue((record, i), record);
                 }
@@ -217,12 +219,12 @@ sealed class ExternalSorter(SorterOptions options)
 
             long lines = 0;
 
-            while (queue.TryDequeue(out (LineRecord Record, int Run) item, out _))
+            while (queue.TryDequeue(out var item, out _))
             {
                 WriteRecord(writer, item.Record);
                 lines++;
 
-                if (TryReadRecord(readers[item.Run], inputs[item.Run], out LineRecord next))
+                if (TryReadRecord(readers[item.Run], inputs[item.Run], out var next))
                 {
                     queue.Enqueue((next, item.Run), next);
                 }
@@ -232,7 +234,7 @@ sealed class ExternalSorter(SorterOptions options)
         }
         finally
         {
-            foreach (StreamReader reader in readers)
+            foreach (var reader in readers)
             {
                 reader.Dispose();
             }
@@ -258,10 +260,11 @@ sealed class ExternalSorter(SorterOptions options)
     }
 
     // No string per record: at hundreds of millions of records that is the dominant allocation.
+    // 11 chars fit any int, so TryFormat cannot run out of room.
     static void WriteRecord(StreamWriter writer, LineRecord record)
     {
         Span<char> digits = stackalloc char[11];
-        record.Number.TryFormat(digits, out int written, provider: CultureInfo.InvariantCulture);
+        record.Number.TryFormat(digits, out var written, provider: CultureInfo.InvariantCulture);
 
         writer.Write(digits[..written]);
         writer.Write(LineRecord.Separator);
@@ -271,7 +274,7 @@ sealed class ExternalSorter(SorterOptions options)
 
     static void DeleteRunFiles(List<string> runFiles)
     {
-        foreach (string runFile in runFiles)
+        foreach (var runFile in runFiles)
         {
             try
             {

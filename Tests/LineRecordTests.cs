@@ -7,7 +7,7 @@ public class LineRecordTests
     [Fact]
     public void ParsesNumberAndText()
     {
-        Assert.True(LineRecord.TryParse("415. Apple", out LineRecord record));
+        Assert.True(LineRecord.TryParse("415. Apple", out var record));
         Assert.Equal(415, record.Number);
         Assert.Equal("Apple", record.Text);
     }
@@ -15,7 +15,7 @@ public class LineRecordTests
     [Fact]
     public void SplitsOnFirstSeparatorOnly()
     {
-        Assert.True(LineRecord.TryParse("32. Cherry is the best", out LineRecord record));
+        Assert.True(LineRecord.TryParse("32. Cherry is the best", out var record));
         Assert.Equal(32, record.Number);
         Assert.Equal("Cherry is the best", record.Text);
     }
@@ -23,7 +23,7 @@ public class LineRecordTests
     [Fact]
     public void KeepsLaterSeparatorsInsideText()
     {
-        Assert.True(LineRecord.TryParse("7. 32. Cherry is the best", out LineRecord record));
+        Assert.True(LineRecord.TryParse("7. 32. Cherry is the best", out var record));
         Assert.Equal(7, record.Number);
         Assert.Equal("32. Cherry is the best", record.Text);
     }
@@ -31,7 +31,7 @@ public class LineRecordTests
     [Fact]
     public void TreatsEmptyTextAsWellFormed()
     {
-        Assert.True(LineRecord.TryParse("415. ", out LineRecord record));
+        Assert.True(LineRecord.TryParse("415. ", out var record));
         Assert.Equal(415, record.Number);
         Assert.Equal(string.Empty, record.Text);
     }
@@ -46,7 +46,7 @@ public class LineRecordTests
     [InlineData("1 000. Grouped number")]
     public void ReportsMalformedLineAsFailure(string line)
     {
-        Assert.False(LineRecord.TryParse(line, out LineRecord record));
+        Assert.False(LineRecord.TryParse(line, out var record));
         Assert.Equal(0, record.Number);
         Assert.Null(record.Text);
     }
@@ -60,7 +60,7 @@ public class LineRecordTests
     [Fact]
     public void ParsesNumberAtIntMaxValue()
     {
-        Assert.True(LineRecord.TryParse($"{int.MaxValue}. Apple", out LineRecord record));
+        Assert.True(LineRecord.TryParse($"{int.MaxValue}. Apple", out var record));
         Assert.Equal(int.MaxValue, record.Number);
     }
 

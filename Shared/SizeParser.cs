@@ -13,10 +13,10 @@ public static class SizeParser
             return false;
         }
 
-        string text = value.Trim().ToUpperInvariant();
+        var text = value.Trim().ToUpperInvariant();
 
         // KB/MB/GB are binary multiples; a bare number is bytes.
-        long multiplier = text switch
+        var multiplier = text switch
         {
             _ when text.EndsWith("GB") => 1024L * 1024 * 1024,
             _ when text.EndsWith("MB") => 1024L * 1024,
@@ -24,9 +24,9 @@ public static class SizeParser
             _ => 1L
         };
 
-        string number = multiplier == 1 ? text : text[..^2];
+        var number = multiplier == 1 ? text : text[..^2];
 
-        if (!long.TryParse(number, NumberStyles.None, CultureInfo.InvariantCulture, out long amount)
+        if (!long.TryParse(number, NumberStyles.None, CultureInfo.InvariantCulture, out var amount)
             || amount <= 0
             || amount > long.MaxValue / multiplier)
         {

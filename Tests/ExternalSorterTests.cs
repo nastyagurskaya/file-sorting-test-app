@@ -34,7 +34,7 @@ public class ExternalSorterTests
         using TempWorkspace workspace = new();
         File.WriteAllText(workspace.Input, string.Empty);
 
-        SortResult result = Sort(workspace);
+        var result = Sort(workspace);
 
         Assert.Equal(0L, result.LinesWritten);
         Assert.Equal(0L, result.LinesSkipped);
@@ -48,7 +48,7 @@ public class ExternalSorterTests
         using TempWorkspace workspace = new();
         File.WriteAllLines(workspace.Input, ["415. Apple"]);
 
-        SortResult result = Sort(workspace);
+        var result = Sort(workspace);
 
         Assert.Equal(1L, result.LinesWritten);
         Assert.Equal(["415. Apple"], File.ReadAllLines(workspace.Output));
@@ -73,7 +73,7 @@ public class ExternalSorterTests
         using TempWorkspace workspace = new();
         Generate(workspace, sizeBytes: 200 * 1024, seed: 7);
 
-        SortResult result = Sort(workspace, chunkSizeBytes: 8 * 1024);
+        var result = Sort(workspace, chunkSizeBytes: 8 * 1024);
 
         Assert.True(result.RunCount > 1, $"Expected the input to be split into several runs, got {result.RunCount}.");
         AssertOrdered(workspace.Output);
@@ -95,7 +95,7 @@ public class ExternalSorterTests
             "7. Cherry"
         ]);
 
-        SortResult result = Sort(workspace);
+        var result = Sort(workspace);
 
         Assert.Equal(3L, result.LinesWritten);
         Assert.Equal(3L, result.LinesSkipped);
@@ -120,7 +120,7 @@ public class ExternalSorterTests
         Generate(workspace, sizeBytes: 64 * 1024, seed: 3);
         const int mergeFactor = 3;
 
-        SortResult result = Sort(workspace, chunkSizeBytes: 1024, mergeFactor);
+        var result = Sort(workspace, chunkSizeBytes: 1024, mergeFactor);
 
         // More than factor² runs guarantees one pass cannot bring them down to the factor.
         Assert.True(result.RunCount > mergeFactor * mergeFactor, $"Precondition: expected more than {mergeFactor * mergeFactor} runs, got {result.RunCount}.");
@@ -142,9 +142,9 @@ public class ExternalSorterTests
     {
         LineRecord? previous = null;
 
-        foreach (string line in File.ReadLines(path))
+        foreach (var line in File.ReadLines(path))
         {
-            Assert.True(LineRecord.TryParse(line, out LineRecord current), $"Output holds a malformed line: {line}");
+            Assert.True(LineRecord.TryParse(line, out var current), $"Output holds a malformed line: {line}");
 
             if (previous is LineRecord earlier)
             {

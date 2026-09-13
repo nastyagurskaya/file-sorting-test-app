@@ -77,13 +77,13 @@ sealed class FileGenerator(GeneratorOptions options)
             "Almond", "Chestnut", "Hazelnut", "Pistachio", "Blackberry", "Gooseberry", "Persimmon"
         ];
 
-        string[] pool = new string[special.Length + (adjectives.Length * nouns.Length)];
+        var pool = new string[special.Length + (adjectives.Length * nouns.Length)];
         special.CopyTo(pool, 0);
-        int index = special.Length;
+        var index = special.Length;
 
-        foreach (string adjective in adjectives)
+        foreach (var adjective in adjectives)
         {
-            foreach (string noun in nouns)
+            foreach (var noun in nouns)
             {
                 pool[index++] = $"{adjective} {noun}";
             }

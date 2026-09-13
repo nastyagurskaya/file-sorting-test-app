@@ -12,7 +12,7 @@ public class FileGeneratorTests
         using TempWorkspace workspace = new();
         Generate(workspace, sizeBytes: 64 * 1024, seed: 42);
 
-        foreach (string line in File.ReadLines(workspace.Output))
+        foreach (var line in File.ReadLines(workspace.Output))
         {
             Assert.True(LineRecord.TryParse(line, out _), $"Generator produced a malformed line: {line}");
         }
@@ -22,7 +22,7 @@ public class FileGeneratorTests
     public void ReportedCountsMatchTheFileOnDisk()
     {
         using TempWorkspace workspace = new();
-        GenerationResult result = Generate(workspace, sizeBytes: 64 * 1024, seed: 42);
+        var result = Generate(workspace, sizeBytes: 64 * 1024, seed: 42);
 
         Assert.Equal(File.ReadLines(workspace.Output).Count(), result.LinesWritten);
         Assert.Equal(new FileInfo(workspace.Output).Length, result.BytesWritten);
@@ -34,10 +34,10 @@ public class FileGeneratorTests
         using TempWorkspace workspace = new();
         const long target = 64 * 1024;
 
-        GenerationResult result = Generate(workspace, target, seed: 42);
+        var result = Generate(workspace, target, seed: 42);
 
-        string[] lines = File.ReadAllLines(workspace.Output);
-        long withoutLastLine = result.BytesWritten - Encoding.UTF8.GetByteCount(lines[^1]) - 1;
+        var lines = File.ReadAllLines(workspace.Output);
+        var withoutLastLine = result.BytesWritten - Encoding.UTF8.GetByteCount(lines[^1]) - 1;
 
         Assert.True(result.BytesWritten >= target, $"Wrote {result.BytesWritten} bytes, short of the {target} target.");
         Assert.True(withoutLastLine < target, $"Overshot by more than one line: {withoutLastLine} bytes already reach {target}.");
@@ -85,9 +85,9 @@ public class FileGeneratorTests
         using TempWorkspace workspace = new();
         Generate(workspace, sizeBytes: 512 * 1024, seed: 42);
 
-        List<LineRecord> records = ReadRecords(workspace);
-        int distinctTexts = records.Select(record => record.Text).Distinct(StringComparer.Ordinal).Count();
-        int mostRepeated = records.GroupBy(record => record.Text, StringComparer.Ordinal).Max(group => group.Count());
+        var records = ReadRecords(workspace);
+        var distinctTexts = records.Select(record => record.Text).Distinct(StringComparer.Ordinal).Count();
+        var mostRepeated = records.GroupBy(record => record.Text, StringComparer.Ordinal).Max(group => group.Count());
 
         Assert.True(distinctTexts * 5 < records.Count, $"Only {distinctTexts} distinct texts across {records.Count} lines is not enough reuse.");
         Assert.True(mostRepeated >= 5, $"The most common text appears just {mostRepeated} times.");
@@ -99,7 +99,7 @@ public class FileGeneratorTests
         using TempWorkspace workspace = new();
         Generate(workspace, sizeBytes: 64 * 1024, seed: 42);
 
-        foreach (LineRecord record in ReadRecords(workspace))
+        foreach (var record in ReadRecords(workspace))
         {
             Assert.InRange(record.Number, 1, 99_999);
         }
@@ -134,7 +134,7 @@ public class FileGeneratorTests
         using TempWorkspace workspace = new();
         Generate(workspace, sizeBytes: 32 * 1024, seed: 42);
 
-        byte[] bytes = File.ReadAllBytes(workspace.Output);
+        var bytes = File.ReadAllBytes(workspace.Output);
 
         Assert.False(bytes.Take(3).SequenceEqual<byte>([0xEF, 0xBB, 0xBF]), "Output starts with a UTF-8 BOM.");
         Assert.DoesNotContain((byte)'\r', bytes);
@@ -147,9 +147,9 @@ public class FileGeneratorTests
     {
         List<LineRecord> records = [];
 
-        foreach (string line in File.ReadLines(workspace.Output))
+        foreach (var line in File.ReadLines(workspace.Output))
         {
-            Assert.True(LineRecord.TryParse(line, out LineRecord record), $"Generator produced a malformed line: {line}");
+            Assert.True(LineRecord.TryParse(line, out var record), $"Generator produced a malformed line: {line}");
             records.Add(record);
         }
 

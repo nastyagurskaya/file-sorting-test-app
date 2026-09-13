@@ -9,7 +9,7 @@ public sealed class LineComparer : IComparer<LineRecord>
 
     public int Compare(LineRecord x, LineRecord y)
     {
-        int byText = StringComparer.Ordinal.Compare(x.Text, y.Text);
+        var byText = StringComparer.Ordinal.Compare(x.Text, y.Text);
         return byText != 0 ? byText : x.Number.CompareTo(y.Number);
     }
 }

@@ -6,13 +6,13 @@ const int DefaultMaxWorkers = 4;
 
 string? input = null;
 string? output = null;
-string temp = Path.GetTempPath();
-long chunkSize = DefaultChunkSize;
-int workers = Math.Min(Environment.ProcessorCount, DefaultMaxWorkers);
-int mergeFactor = SorterOptions.DefaultMergeFactor;
-bool valid = args.Length % 2 == 0;
+var temp = Path.GetTempPath();
+var chunkSize = DefaultChunkSize;
+var workers = Math.Min(Environment.ProcessorCount, DefaultMaxWorkers);
+var mergeFactor = SorterOptions.DefaultMergeFactor;
+var valid = args.Length % 2 == 0;
 
-for (int i = 0; valid && i < args.Length; i += 2)
+for (var i = 0; valid && i < args.Length; i += 2)
 {
     switch (args[i])
     {
