@@ -113,13 +113,30 @@ public class ExternalSorterTests
         Assert.Empty(Directory.GetFiles(workspace.Temp));
     }
 
+    [Fact]
+    public void RunsFarAboveMergeFactorAreMergedInSeveralPasses()
+    {
+        using TempWorkspace workspace = new();
+        Generate(workspace, sizeBytes: 64 * 1024, seed: 3);
+        const int mergeFactor = 3;
+
+        SortResult result = Sort(workspace, chunkSizeBytes: 1024, mergeFactor);
+
+        // More than factor² runs guarantees one pass cannot bring them down to the factor.
+        Assert.True(result.RunCount > mergeFactor * mergeFactor, $"Precondition: expected more than {mergeFactor * mergeFactor} runs, got {result.RunCount}.");
+        Assert.True(result.MergePasses >= 2, $"Expected several intermediate passes, got {result.MergePasses}.");
+        AssertOrdered(workspace.Output);
+        AssertSameLines(workspace.Input, workspace.Output);
+        Assert.Empty(Directory.GetFiles(workspace.Temp));
+    }
+
     // FileGenerator is only a source of realistic, varied input here — these tests assert on
     // ExternalSorter's behavior, not on what FileGenerator produces.
     static void Generate(TempWorkspace workspace, long sizeBytes, int seed) =>
         new FileGenerator(new GeneratorOptions(workspace.Input, sizeBytes, seed)).Generate();
 
-    static SortResult Sort(TempWorkspace workspace, long chunkSizeBytes = 1024 * 1024) =>
-        new ExternalSorter(new SorterOptions(workspace.Input, workspace.Output, workspace.Temp, chunkSizeBytes)).Sort();
+    static SortResult Sort(TempWorkspace workspace, long chunkSizeBytes = 1024 * 1024, int mergeFactor = SorterOptions.DefaultMergeFactor) =>
+        new ExternalSorter(new SorterOptions(workspace.Input, workspace.Output, workspace.Temp, chunkSizeBytes, MergeFactor: mergeFactor)).Sort();
 
     static void AssertOrdered(string path)
     {

@@ -6,29 +6,46 @@ using Shared;
 
 namespace Sorter;
 
-record SorterOptions(string Input, string Output, string TempFolder, long ChunkSizeBytes, int? Workers = null);
+record SorterOptions(
+    string Input,
+    string Output,
+    string TempFolder,
+    long ChunkSizeBytes,
+    int? Workers = null,
+    int MergeFactor = SorterOptions.DefaultMergeFactor)
+{
+    public const int DefaultMergeFactor = 64;
+}
 
-record SortResult(long LinesWritten, long LinesSkipped, int RunCount);
+// RunCount is what phase 1 produced; MergePasses counts the intermediate passes before the final merge.
+record SortResult(long LinesWritten, long LinesSkipped, int RunCount, int MergePasses);
 
 sealed class ExternalSorter(SorterOptions options)
 {
+    static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
     const int BufferSize = 1024 * 1024;
     const int ChannelCapacity = 2;
 
     long skipped;
-
-    static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+    int mergePasses;
+    int nextRunIndex;
+    string NextRunPath() => Path.Combine(options.TempFolder, $"run-{nextRunIndex++:D5}.tmp");
 
     public SortResult Sort()
     {
+        // A factor of 1 would merge each run into a copy of itself and never finish.
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.MergeFactor, 2);
+
         Directory.CreateDirectory(options.TempFolder);
         List<string> runFiles = [];
 
         try
         {
             SplitAsync(runFiles).GetAwaiter().GetResult();
-            var lines = Merge(runFiles);
-            return new SortResult(lines, skipped, runFiles.Count);
+            int runCount = runFiles.Count;
+            long lines = Merge(runFiles);
+
+            return new SortResult(lines, skipped, runCount, mergePasses);
         }
         finally
         {
@@ -123,14 +140,13 @@ sealed class ExternalSorter(SorterOptions options)
         }
         finally
         {
-            // Without this the workers would wait on an open channel forever if reading threw.
             writer.Complete();
         }
     }
 
     async Task HandOverAsync(ChannelWriter<(string Path, List<LineRecord> Records)> writer, List<LineRecord> chunk, List<string> runFiles)
     {
-        string path = Path.Combine(options.TempFolder, $"run-{runFiles.Count:D5}.tmp");
+        string path = NextRunPath();
         runFiles.Add(path);
         await writer.WriteAsync((path, chunk));
     }
@@ -150,20 +166,50 @@ sealed class ExternalSorter(SorterOptions options)
     }
 
     // Single-threaded on purpose: the merge is I/O-bound, and parallel reads on one disk contend.
+    // Runs are merged in groups of MergeFactor until few enough remain for one final merge, so open
+    // file handles and read buffers stay bounded however many runs phase 1 produced.
     long Merge(List<string> runFiles)
     {
-        List<StreamReader> readers = new(runFiles.Count);
-        PriorityQueue<(LineRecord Record, int Run), LineRecord> queue = new(runFiles.Count, LineComparer.Instance);
+        while (runFiles.Count > options.MergeFactor)
+        {
+            mergePasses++;
+            string[] passInputs = [.. runFiles];
+
+            for (int start = 0; start < passInputs.Length; start += options.MergeFactor)
+            {
+                string[] group = passInputs[start..Math.Min(start + options.MergeFactor, passInputs.Length)];
+                var merged = NextRunPath();
+                runFiles.Add(merged);
+
+                MergeFiles(group, merged);
+
+                // Delete inputs as soon as they are merged: keeps temp at ~1x the data, and keeps
+                // runFiles equal to what is on disk for Sort's cleanup.
+                foreach (string input in group)
+                {
+                    File.Delete(input);
+                    runFiles.Remove(input);
+                }
+            }
+        }
+
+        return MergeFiles(runFiles, options.Output);
+    }
+
+    static long MergeFiles(IReadOnlyList<string> inputs, string outputPath)
+    {
+        List<StreamReader> readers = new(inputs.Count);
+        PriorityQueue<(LineRecord Record, int Run), LineRecord> queue = new(inputs.Count, LineComparer.Instance);
 
         try
         {
-            using StreamWriter writer = new(options.Output, append: false, Utf8NoBom, BufferSize);
+            using StreamWriter writer = new(outputPath, append: false, Utf8NoBom, BufferSize);
 
-            for (int i = 0; i < runFiles.Count; i++)
+            for (int i = 0; i < inputs.Count; i++)
             {
-                readers.Add(new StreamReader(runFiles[i], Utf8NoBom, detectEncodingFromByteOrderMarks: false, BufferSize));
+                readers.Add(new StreamReader(inputs[i], Utf8NoBom, detectEncodingFromByteOrderMarks: false, BufferSize));
 
-                if (TryReadRecord(readers[i], runFiles[i], out LineRecord record))
+                if (TryReadRecord(readers[i], inputs[i], out LineRecord record))
                 {
                     queue.Enqueue((record, i), record);
                 }
@@ -176,7 +222,7 @@ sealed class ExternalSorter(SorterOptions options)
                 WriteRecord(writer, item.Record);
                 lines++;
 
-                if (TryReadRecord(readers[item.Run], runFiles[item.Run], out LineRecord next))
+                if (TryReadRecord(readers[item.Run], inputs[item.Run], out LineRecord next))
                 {
                     queue.Enqueue((next, item.Run), next);
                 }
@@ -212,7 +258,6 @@ sealed class ExternalSorter(SorterOptions options)
     }
 
     // No string per record: at hundreds of millions of records that is the dominant allocation.
-    // 11 chars holds every int, and '\n' is written explicitly so output matches on every platform.
     static void WriteRecord(StreamWriter writer, LineRecord record)
     {
         Span<char> digits = stackalloc char[11];

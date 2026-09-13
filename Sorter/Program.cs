@@ -9,6 +9,7 @@ string? output = null;
 string temp = Path.GetTempPath();
 long chunkSize = DefaultChunkSize;
 int workers = Math.Min(Environment.ProcessorCount, DefaultMaxWorkers);
+int mergeFactor = SorterOptions.DefaultMergeFactor;
 bool valid = args.Length % 2 == 0;
 
 for (int i = 0; valid && i < args.Length; i += 2)
@@ -30,6 +31,9 @@ for (int i = 0; valid && i < args.Length; i += 2)
         case "--workers":
             valid = int.TryParse(args[i + 1], out workers) && workers > 0;
             break;
+        case "--merge-factor":
+            valid = int.TryParse(args[i + 1], out mergeFactor) && mergeFactor >= 2;
+            break;
         default:
             valid = false;
             break;
@@ -38,7 +42,7 @@ for (int i = 0; valid && i < args.Length; i += 2)
 
 if (!valid || input is null || output is null)
 {
-    Console.Error.WriteLine("Usage: Sorter --input <path> --output <path> [--temp <folder>] [--chunk-size <bytes|64MB|1GB>] [--workers <n>]");
+    Console.Error.WriteLine("Usage: Sorter --input <path> --output <path> [--temp <folder>] [--chunk-size <bytes|64MB|1GB>] [--workers <n>] [--merge-factor <n>]");
     return 1;
 }
 
@@ -48,8 +52,8 @@ if (!File.Exists(input))
     return 1;
 }
 
-var result = new ExternalSorter(new SorterOptions(input, output, temp, chunkSize, workers)).Sort();
-Console.WriteLine($"Sorted {result.LinesWritten:N0} lines from {result.RunCount:N0} runs to {output} on {workers} workers.");
+var result = new ExternalSorter(new SorterOptions(input, output, temp, chunkSize, workers, mergeFactor)).Sort();
+Console.WriteLine($"Sorted {result.LinesWritten:N0} lines from {result.RunCount:N0} runs ({result.MergePasses} intermediate merge passes) to {output} on {workers} workers.");
 
 if (result.LinesSkipped > 0)
 {
