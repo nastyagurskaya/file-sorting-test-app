@@ -47,7 +47,7 @@ public class LineRecordTests
     public void ReportsMalformedLineAsFailure(string line)
     {
         Assert.False(LineRecord.TryParse(line, out var record));
-        Assert.Equal(0, record.Number);
+        Assert.Equal(0L, record.Number);
         Assert.Null(record.Text);
     }
 
@@ -58,16 +58,16 @@ public class LineRecordTests
     }
 
     [Fact]
-    public void ParsesNumberAtIntMaxValue()
+    public void ParsesNumberAtLongMaxValue()
     {
-        Assert.True(LineRecord.TryParse($"{int.MaxValue}. Apple", out var record));
-        Assert.Equal(int.MaxValue, record.Number);
+        Assert.True(LineRecord.TryParse($"{long.MaxValue}. Apple", out var record));
+        Assert.Equal(long.MaxValue, record.Number);
     }
 
     [Fact]
-    public void ReportsNumberBeyondIntRangeAsFailure()
+    public void ReportsNumberBeyondLongRangeAsFailure()
     {
-        Assert.False(LineRecord.TryParse("2147483648. Apple", out _));
+        Assert.False(LineRecord.TryParse("9223372036854775808. Apple", out _));
         Assert.False(LineRecord.TryParse("99999999999999999999. Apple", out _));
     }
 }

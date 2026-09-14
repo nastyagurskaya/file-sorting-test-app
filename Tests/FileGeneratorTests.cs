@@ -94,15 +94,29 @@ public class FileGeneratorTests
     }
 
     [Fact]
-    public void NumbersStayInTheSmallRealisticRange()
+    public void MostNumbersStayInTheSmallRealisticRange()
     {
         using TempWorkspace workspace = new();
         Generate(workspace, sizeBytes: 64 * 1024, seed: 42);
 
-        foreach (var record in ReadRecords(workspace))
-        {
-            Assert.InRange(record.Number, 1, 99_999);
-        }
+        var records = ReadRecords(workspace);
+        var small = records.Count(record => record.Number is >= 1 and <= 99_999);
+
+        Assert.All(records, record => Assert.True(record.Number >= 1, $"Generated a non-positive number: {record.Number}"));
+        Assert.True(small * 10 >= records.Count * 9, $"Only {small} of {records.Count} numbers are in 1..99,999.");
+    }
+
+    // Every length from 1 to 19 digits, so generated data covers the int boundary and the long range,
+    // not just tiny numbers plus a cluster of 19-digit ones.
+    [Fact]
+    public void ProducesNumbersOfEveryLengthUpToLong()
+    {
+        using TempWorkspace workspace = new();
+        Generate(workspace, sizeBytes: 512 * 1024, seed: 42);
+
+        var lengths = ReadRecords(workspace).Select(record => record.Number.ToString().Length).ToHashSet();
+
+        Assert.Equal(Enumerable.Range(1, 19), lengths.Order());
     }
 
     // The pool deliberately holds values such as "32. Cherry is the best" so generated data

@@ -260,10 +260,10 @@ sealed class ExternalSorter(SorterOptions options)
     }
 
     // No string per record: at hundreds of millions of records that is the dominant allocation.
-    // 11 chars fit any int, so TryFormat cannot run out of room.
+    // 20 chars fit any long (19 digits plus sign), so TryFormat cannot run out of room.
     static void WriteRecord(StreamWriter writer, LineRecord record)
     {
-        Span<char> digits = stackalloc char[11];
+        Span<char> digits = stackalloc char[20];
         record.Number.TryFormat(digits, out var written, provider: CultureInfo.InvariantCulture);
 
         writer.Write(digits[..written]);

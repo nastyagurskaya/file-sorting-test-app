@@ -38,7 +38,24 @@ sealed class FileGenerator(GeneratorOptions options)
         return new GenerationResult(lines, bytes);
     }
 
-    int NextNumber() => random.Next(1, 100000);
+    // Mostly small numbers like the brief's example. About 1 in 100 gets a random length of 1-19 digits:
+    // a uniform draw over the whole long range would be almost always 19 digits and never hit the int boundary.
+    long NextNumber()
+    {
+        if (random.Next(100) != 0)
+        {
+            return random.Next(1, 100_000);
+        }
+
+        var digits = random.Next(1, 20);
+        long low = 1;
+        for (var i = 1; i < digits; i++)
+        {
+            low *= 10;
+        }
+
+        return random.NextInt64(low, digits == 19 ? long.MaxValue : low * 10);
+    }
 
     static string[] BuildTextPool()
     {

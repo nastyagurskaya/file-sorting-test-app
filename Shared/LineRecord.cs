@@ -5,11 +5,11 @@ namespace Shared;
 /// <summary>
 /// One line of the file in parsed form: "Number. Text", e.g. "415. Apple".
 /// </summary>
-public readonly struct LineRecord(int number, string text)
+public readonly struct LineRecord(long number, string text)
 {
     public const string Separator = ". ";
 
-    public int Number { get; } = number;
+    public long Number { get; } = number;
 
     public string Text { get; } = text;
 
@@ -29,7 +29,7 @@ public readonly struct LineRecord(int number, string text)
             return false;
         }
 
-        if (!int.TryParse(
+        if (!long.TryParse(
                 line.AsSpan(0, separatorIndex),
                 NumberStyles.None,
                 CultureInfo.InvariantCulture,

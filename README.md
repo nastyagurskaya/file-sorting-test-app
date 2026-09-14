@@ -47,7 +47,7 @@ Run files are deleted when the sort finishes, including when it fails.
 
 ## Design decisions
 
-**`int` for Number.** The data comes from our own generator (numbers 1–99,999), so there is no unbounded external range to guard against. A number outside `int` range fails `int.TryParse` and is handled as a malformed line, not a crash.
+**`long` for Number.** The brief doesn't bound the number's range, and the sorter has to handle input it didn't produce. `long` covers anything a caller could plausibly send; a value beyond it fails `long.TryParse` and is counted as malformed rather than silently mis-sorted. It costs nothing: the struct is 16 bytes either way once the string reference is aligned. The generator keeps most numbers in 1–99,999, like the brief's example, but gives about 1 in 100 a random length of 1–19 digits, so generated files cover the `int` boundary and the whole `long` range.
 
 **Split on the first `". "` only.** The `String` part may contain dots and digits itself (`32. Cherry is the best`), so everything after the first separator is text.
 
@@ -69,16 +69,16 @@ Run files are deleted when the sort finishes, including when it fails.
 
 ## Timing: 1 worker vs N workers
 
-A 1 GB file (50.9M lines, seed 42) sorted with default settings except `--workers`. Each configuration was run three times on a warm OS file cache; the table shows the median.
+A 1 GB file (50.7M lines, seed 42) sorted with default settings except `--workers`. Each configuration was run three times on a warm OS file cache; the table shows the median.
 
 Machine: Apple M4 (10 cores), 24 GB RAM, SSD, macOS 15.6, .NET 10, Release build.
 
 | Workers | Time | Speedup |
 |---|---|---|
-| 1 | 24.3 s | 1.00× |
-| 2 | 17.5 s | 1.39× |
-| 4 | 15.6 s | 1.56× |
-| 10 | 14.7 s | 1.65× |
+| 1 | 23.8 s | 1.00× |
+| 2 | 17.6 s | 1.35× |
+| 4 | 15.0 s | 1.58× |
+| 10 | 14.7 s | 1.62× |
 
 The output file was byte-identical for every worker count. Speedup flattens quickly because phase 1 still has a serial part (reading and parsing on one thread) and phase 2 is serial by design.
 
@@ -101,12 +101,13 @@ Core properties, checked on generated data split into several runs:
 | Far more runs than the merge factor (several passes) | `RunsFarAboveMergeFactorAreMergedInSeveralPasses` |
 | Malformed lines skipped, counted, not written | `MalformedLinesAreSkippedCountedAndLeftOutOfOutput`, `ReportsMalformedLineAsFailure` |
 | `String` containing `". "` and digits | `SplitsOnFirstSeparatorOnly`, `KeepsLaterSeparatorsInsideText` |
-| Number at `int.MaxValue` / beyond `int` range | `ParsesNumberAtIntMaxValue`, `ReportsNumberBeyondIntRangeAsFailure` |
+| Number at `long.MaxValue` / beyond `long` range | `ParsesNumberAtLongMaxValue`, `ReportsNumberBeyondLongRangeAsFailure` |
+| Numbers above `int.MaxValue` survive run files and the merge | `NumbersBeyondIntRangeAreSortedAndKept` |
 | Case sensitivity of the ordering | `ComparesTextCaseSensitively` |
 | Example from the task brief | `SortsTheBriefsExampleIntoExpectedOrder` |
 | Run files removed after the sort | `RunFilesAreDeletedAfterSorting` |
 
-The generator tests check the properties the sorter relies on: every line is well-formed (`EveryGeneratedLineIsWellFormed`), many lines share a `String` (`ManyLinesShareTheSameText`), the pool includes text containing the separator and case-only variants, the same seed gives identical output, and output has `\n` line endings with no BOM.
+The generator tests check the properties the sorter relies on: every line is well-formed (`EveryGeneratedLineIsWellFormed`), many lines share a `String` (`ManyLinesShareTheSameText`), numbers cover every length up to 19 digits (`ProducesNumbersOfEveryLengthUpToLong`), the pool includes text containing the separator and case-only variants, the same seed gives identical output, and output has `\n` line endings with no BOM.
 
 ## AI assistance
 

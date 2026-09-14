@@ -90,7 +90,7 @@ public class ExternalSorterTests
             "415. Apple",
             "no separator here",
             "1. Banana",
-            "99999999999999999999. Beyond int range",
+            "99999999999999999999. Beyond long range",
             "abc. Not a number",
             "7. Cherry"
         ]);
@@ -100,6 +100,30 @@ public class ExternalSorterTests
         Assert.Equal(3L, result.LinesWritten);
         Assert.Equal(3L, result.LinesSkipped);
         Assert.Equal(["415. Apple", "1. Banana", "7. Cherry"], File.ReadAllLines(workspace.Output));
+    }
+
+    // Before Number was a long, every line here above int.MaxValue was silently dropped as malformed.
+    [Fact]
+    public void NumbersBeyondIntRangeAreSortedAndKept()
+    {
+        using TempWorkspace workspace = new();
+        File.WriteAllLines(workspace.Input,
+        [
+            "9223372036854775807. Apple",
+            "2147483648. Apple",
+            "5. Apple",
+            "3000000000. Banana",
+            "2147483647. Apple",
+            "1. Banana"
+        ]);
+
+        // A 1-byte chunk puts every line in its own run, so large numbers go through run files and the merge.
+        var result = Sort(workspace, chunkSizeBytes: 1);
+
+        Assert.Equal(0L, result.LinesSkipped);
+        Assert.Equal(
+            ["5. Apple", "2147483647. Apple", "2147483648. Apple", "9223372036854775807. Apple", "1. Banana", "3000000000. Banana"],
+            File.ReadAllLines(workspace.Output));
     }
 
     [Fact]
