@@ -43,29 +43,37 @@ External merge sort, in two phases.
 1. **Split.** Read the input sequentially, parse each line, and collect records until a chunk reaches `--chunk-size` bytes. Sort the chunk in memory and write it to a temporary *run* file.
 2. **Merge.** Open the runs and do a k-way merge through a priority queue holding one record per run. Repeatedly write the smallest record and replace it with the next record from the same run. If there are more runs than `--merge-factor`, first merge them in groups into intermediate runs, repeating until at most `--merge-factor` remain, then do the final merge into the output.
 
-Run files are deleted when the sort finishes, including when it fails.
+Run files are deleted when the sort finishes, including when it fails. They are named `run-<tag>-NNNNN.tmp` in `--temp`: the tag is unique per sort, which makes concurrent sorts sharing a folder safe, and the index only grows, so intermediate merge passes never reuse the name of a run that hasn't been merged yet.
 
 ## Design decisions
 
-**`long` for Number.** The brief doesn't bound the number's range, and the sorter has to handle input it didn't produce. `long` covers anything a caller could plausibly send; a value beyond it fails `long.TryParse` and is counted as malformed rather than silently mis-sorted. It costs nothing: the struct is 16 bytes either way once the string reference is aligned. The generator keeps most numbers in 1–99,999, like the brief's example, but gives about 1 in 100 a random length of 1–19 digits, so generated files cover the `int` boundary and the whole `long` range.
+**`long` for Number.** The brief doesn't bound the number's range, and the sorter has to handle input it didn't produce. A value beyond `long` fails `long.TryParse` and is counted as malformed rather than silently mis-sorted — and it costs nothing, since the struct is 16 bytes either way.
 
 **Split on the first `". "` only.** The `String` part may contain dots and digits itself (`32. Cherry is the best`), so everything after the first separator is text.
 
-**`StringComparer.Ordinal`.** Deterministic, independent of the machine's culture, and allocation-free. Case-insensitive comparison via `ToLower()` would allocate a string on every comparison (billions of allocations on a 100 GB sort), and culture-aware comparison would change results between machines. As a consequence the order is case-sensitive: `Apple` < `Banana` < `apple`.
+**Output is written from parsed records.** Lines are written back from `(Number, Text)` rather than copied byte for byte, so numbers are normalised: `0001. Apple` comes out as `1. Apple`. Keeping the original spelling would mean holding an extra string per record in memory.
 
-**Minimal structure.** Four projects (`Generator`, `Sorter`, `Shared`, `Tests`), concrete classes, no interfaces of our own, no factories or DI. Every piece has exactly one implementation, so an abstraction layer would add indirection without adding flexibility. The only interface is the framework's `IComparer<LineRecord>`, which `Span.Sort` and `PriorityQueue` require. `Shared` holds the line format (`LineRecord`), the ordering (`LineComparer`) and the size parser both command lines use (`SizeParser`), so both programs agree on them.
+**`StringComparer.Ordinal`.** Deterministic, culture-independent, and allocation-free. `ToLower()` would allocate a string on every comparison; culture-aware comparison would change results between machines. Order is case-sensitive: `Apple` < `Banana` < `apple`.
 
-**Byte-bounded chunks.** Line lengths vary, so a fixed line count would give unpredictable memory use. Counting input bytes gives the same budget for every chunk regardless of what the lines look like.
+**Minimal structure.** Four projects, concrete classes, no interfaces/factories/DI of our own — every piece has exactly one implementation, so an abstraction layer would add indirection without flexibility. `Shared` holds the line format, the comparer, and the size parser both programs use.
 
-**Only phase 1 is parallel.** Sorting chunks is CPU-bound and each chunk is independent. One reader parses the input and feeds N workers, which sort and write the chunks, through a bounded `Channel` (capacity 2), so a fast reader waits for the workers instead of piling chunks up in memory. Workers hand emptied chunk buffers back to the reader for reuse. Phase 2 stays single-threaded: it is one ordered stream, and parallel reads from the same disk compete for I/O rather than speeding it up.
+**Byte-bounded chunks.** Line lengths vary, so counting input bytes (not line count) gives every chunk the same memory budget.
 
-**Multi-pass merge.** Each open run costs a file handle and a ~1 MB read buffer. 100 GB in 64 MB chunks is ~1,600 runs, which would exceed common file-descriptor limits (256 on macOS by default) and hold ~1.6 GB of buffers. Merging in groups of 64 bounds both and costs one intermediate pass at that size (1,600 runs → 25 → final). Each group's inputs are deleted as soon as they are merged, so temp space stays around 1× the data.
+**Only phase 1 is parallel.** Sorting chunks is CPU-bound and independent per chunk, so N workers sort behind a bounded `Channel` (capacity 2) fed by one reader; workers hand emptied buffers back for reuse. Phase 2 stays sequential — one ordered stream, and parallel reads on one disk would contend. That's a design choice, not a measured one: these benchmarks run on a warm file cache and don't show how much of the merge is spent waiting on I/O.
 
-**Memory model.** Peak memory in phase 1 is roughly `chunkSize × (workers + 3)`: one chunk being read, up to two waiting in the channel, and one per worker. A chunk's in-memory cost is about 3× its size in the file (UTF-16 strings, object headers, record array); live data measured ~725 MB at one worker. So `chunkSize × (workers + 3) × 3` has to fit in RAM. Emptied buffers waiting for reuse keep their record arrays, which adds a little on top. Process RSS runs higher than that, because the GC collects lazily when it is not under memory pressure. Phase 2 needs about `mergeFactor × 1 MB`.
+**Multi-pass merge.** Each open run costs a file handle and ~190 KB of buffers, so merging all runs at once at 100 GB scale (~1,600 runs) would exceed typical file-descriptor limits. Merging in groups of `--merge-factor` (default 64) bounds that, at the cost of one intermediate pass; each group's inputs are deleted as soon as it's merged, so temp space stays around 1× the data.
 
-**Default of 4 workers.** In the measurement below, going from 4 to 10 workers saves ~6% of the time, while each extra worker adds a chunk's worth of memory. The bottleneck past that point is the single reader, which parses every line, and the single-threaded merge.
+**Memory model.** Peak phase-1 memory is roughly `chunkSize × (workers + 3) × 3` — the ×3 is a chunk's in-memory cost versus its size on disk (UTF-16 strings, object headers, record array). Phase 2 needs about `mergeFactor × 190 KB` for the readers plus one writer buffer; measured peak RSS was ~90 MB for a 200 MB file split into 800 runs.
 
-**Malformed lines.** A line without `". "` or with an unparseable number is skipped, counted, and left out of the output. The total is printed at the end so a shorter output file is explained. Lines are not logged one by one: on a junk-heavy file the synchronised console writes would dominate the run time. Run files are different: we write them ourselves from already parsed records, so an unparseable line there means corruption, and the merge throws instead of silently dropping the rest of that run.
+**Default of 4 workers.** Measured: 4→10 workers saves ~6% more time for a full extra chunk of memory per worker. Past 4, the bottleneck is the single reader/parser and the single-threaded merge.
+
+**Malformed lines.** Skipped, counted, and left out of the output; the total is printed at the end. Not logged one by one — synchronised console writes would dominate the run time on junk-heavy input. A malformed line in our own run files is treated as corruption (the merge throws), since we wrote those ourselves from already-parsed records.
+
+**Atomic output replace.** The final merge writes to a staging file beside the output and moves it into place only on success, so a failed merge never leaves a truncated output file.
+
+**Argument validation.** `Workers`, `ChunkSizeBytes`, and `MergeFactor` are checked at the start of `Sort()` — a non-positive value would otherwise hang (workers) or silently misbehave (chunk size) instead of failing clearly.
+
+**Not taken: adaptive grouping with a binary run format.** An external review proposed this, with a measured 2.59× speedup. It adds a second file format to keep correct and three heuristic thresholds — complexity without matching engineering quality, so run files stay plain text in the same format as the input.
 
 ## Timing: 1 worker vs N workers
 
@@ -75,10 +83,10 @@ Machine: Apple M4 (10 cores), 24 GB RAM, SSD, macOS 15.6, .NET 10, Release build
 
 | Workers | Time | Speedup |
 |---|---|---|
-| 1 | 23.8 s | 1.00× |
-| 2 | 17.6 s | 1.35× |
-| 4 | 15.0 s | 1.58× |
-| 10 | 14.7 s | 1.62× |
+| 1 | 23.2 s | 1.00× |
+| 2 | 17.7 s | 1.31× |
+| 4 | 14.9 s | 1.55× |
+| 10 | 14.4 s | 1.62× |
 
 The output file was byte-identical for every worker count. Speedup flattens quickly because phase 1 still has a serial part (reading and parsing on one thread) and phase 2 is serial by design.
 
@@ -111,4 +119,4 @@ The generator tests check the properties the sorter relies on: every line is wel
 
 ## AI assistance
 
-Claude Code was used for implementation. The design decisions, the review of what it produced, and the benchmarking are mine.
+Claude Code was used for implementation and to run the benchmarks in this README. The design decisions, the review of what it produced, and verification of the results are mine.

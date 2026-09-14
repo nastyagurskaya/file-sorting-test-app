@@ -126,6 +126,111 @@ public class ExternalSorterTests
             File.ReadAllLines(workspace.Output));
     }
 
+    // Sort runs on a separate task with a time limit, so a hang fails the test with a TimeoutException
+    // instead of blocking the whole test run.
+    [Fact]
+    public async Task MissingInputFileFailsInsteadOfHanging()
+    {
+        using TempWorkspace workspace = new();
+
+        var sort = Task.Run(() => Sort(workspace));
+
+        await Assert.ThrowsAsync<FileNotFoundException>(() => sort.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task LockedInputFileFailsInsteadOfHanging()
+    {
+        using TempWorkspace workspace = new();
+        File.WriteAllLines(workspace.Input, ["1. Apple"]);
+        using FileStream exclusiveLock = new(workspace.Input, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var sort = Task.Run(() => Sort(workspace));
+
+        await Assert.ThrowsAnyAsync<IOException>(() => sort.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task ConcurrentSortsSharingATempFolderDoNotCollide()
+    {
+        using TempWorkspace first = new();
+        using TempWorkspace second = new();
+        Generate(first, sizeBytes: 1024 * 1024, seed: 11);
+        Generate(second, sizeBytes: 1024 * 1024, seed: 12);
+        var sharedTemp = first.Temp;
+
+        await Task.WhenAll(
+            Task.Run(() => new ExternalSorter(new SorterOptions(first.Input, first.Output, sharedTemp, 4 * 1024)).Sort()),
+            Task.Run(() => new ExternalSorter(new SorterOptions(second.Input, second.Output, sharedTemp, 4 * 1024)).Sort()));
+
+        AssertOrdered(first.Output);
+        AssertSameLines(first.Input, first.Output);
+        AssertOrdered(second.Output);
+        AssertSameLines(second.Input, second.Output);
+    }
+
+    // A directory at the output path makes the final move fail after the merge has written the whole staging file.
+    [Fact]
+    public void FailedFinalMergeKeepsExistingOutputAndRemovesStagingFile()
+    {
+        using TempWorkspace workspace = new();
+        File.WriteAllLines(workspace.Input, ["2. Banana", "1. Apple"]);
+        Directory.CreateDirectory(workspace.Output);
+        var previousOutput = Path.Combine(workspace.Output, "previous.txt");
+        File.WriteAllText(previousOutput, "previous output");
+
+        Assert.ThrowsAny<IOException>(() => Sort(workspace));
+
+        Assert.Equal("previous output", File.ReadAllText(previousOutput));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(workspace.Output)!, "*.tmp"));
+    }
+
+    // Guarded by a time limit: without validation, zero workers can hang once the channel fills.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task RejectsNonPositiveWorkerCount(int workers)
+    {
+        using TempWorkspace workspace = new();
+        Generate(workspace, sizeBytes: 64 * 1024, seed: 1);
+        var sorter = new ExternalSorter(new SorterOptions(workspace.Input, workspace.Output, workspace.Temp, 1024, workers));
+
+        var sort = Task.Run(sorter.Sort);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => sort.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public void RejectsNonPositiveChunkSize(long chunkSizeBytes)
+    {
+        using TempWorkspace workspace = new();
+        File.WriteAllLines(workspace.Input, ["2. Banana", "1. Apple"]);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => Sort(workspace, chunkSizeBytes));
+    }
+
+    [Fact]
+    public void SecondSortOnTheSameInstanceReportsOnlyItsOwnRun()
+    {
+        using TempWorkspace workspace = new();
+        // A 1-byte chunk makes one run per line, and a merge factor of 2 forces intermediate passes on the first sort.
+        var sorter = new ExternalSorter(new SorterOptions(workspace.Input, workspace.Output, workspace.Temp, 1, MergeFactor: 2));
+
+        File.WriteAllLines(workspace.Input, ["5. E", "bad", "4. D", "3. C", "also bad", "2. B", "1. A"]);
+        sorter.Sort();
+
+        File.WriteAllLines(workspace.Input, ["9. Z", "still bad"]);
+        var second = sorter.Sort();
+
+        Assert.Equal(1L, second.LinesWritten);
+        Assert.Equal(1L, second.LinesSkipped);
+        Assert.Equal(1, second.RunCount);
+        Assert.Equal(0, second.MergePasses);
+        Assert.Equal(["9. Z"], File.ReadAllLines(workspace.Output));
+    }
+
     [Fact]
     public void RunFilesAreDeletedAfterSorting()
     {

@@ -22,10 +22,15 @@ record SortResult(long LinesWritten, long LinesSkipped, int RunCount, int MergeP
 
 sealed class ExternalSorter(SorterOptions options)
 {
-    const int BufferSize = 1024 * 1024;
+    // Readers allocate a byte buffer plus a char buffer (~3x this), writers a char plus byte buffer (~5x), so large
+    // buffers multiply by every run open during a merge.
+    const int BufferSize = 64 * 1024;
     const int ChannelCapacity = 2;
 
     static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
+    // Unique per instance so concurrent sorts sharing --temp don't write to each other's run files.
+    readonly string runTag = Guid.NewGuid().ToString("N")[..8];
 
     long skipped;
     int mergePasses;
@@ -35,6 +40,15 @@ sealed class ExternalSorter(SorterOptions options)
     {
         // A factor of 1 would merge each run into a copy of itself and never finish.
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MergeFactor, 2);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.ChunkSizeBytes);
+
+        if (options.Workers is { } workers)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(workers, nameof(options.Workers));
+        }
+
+        skipped = 0;
+        mergePasses = 0;
 
         Directory.CreateDirectory(options.TempFolder);
         List<string> runFiles = [];
@@ -49,7 +63,7 @@ sealed class ExternalSorter(SorterOptions options)
         }
         finally
         {
-            DeleteRunFiles(runFiles);
+            DeleteTempFiles(runFiles);
         }
     }
 
@@ -106,14 +120,14 @@ sealed class ExternalSorter(SorterOptions options)
         ChannelReader<List<LineRecord>> freeBuffers,
         List<string> runFiles)
     {
-        using StreamReader reader = new(options.Input, Utf8NoBom, detectEncodingFromByteOrderMarks: true, BufferSize);
-
         List<LineRecord> chunk = [];
         long chunkBytes = 0;
         string? line;
 
         try
         {
+            using var reader = OpenSequentialReader(options.Input, detectEncodingFromByteOrderMarks: true);
+
             while ((line = reader.ReadLine()) is not null)
             {
                 if (!LineRecord.TryParse(line, out var record))
@@ -151,7 +165,7 @@ sealed class ExternalSorter(SorterOptions options)
         await writer.WriteAsync((path, chunk));
     }
 
-    string NextRunPath() => Path.Combine(options.TempFolder, $"run-{nextRunIndex++:D5}.tmp");
+    string NextRunPath() => Path.Combine(options.TempFolder, $"run-{runTag}-{nextRunIndex++:D5}.tmp");
 
     void WriteChunk(List<LineRecord> chunk, string path)
     {
@@ -167,7 +181,6 @@ sealed class ExternalSorter(SorterOptions options)
         }
     }
 
-    // Single-threaded on purpose: the merge is I/O-bound, and parallel reads on one disk contend.
     // Runs are merged in groups of MergeFactor until few enough remain for one final merge, so open
     // file handles and read buffers stay bounded however many runs phase 1 produced.
     long Merge(List<string> runFiles)
@@ -195,7 +208,20 @@ sealed class ExternalSorter(SorterOptions options)
             }
         }
 
-        return MergeFiles(runFiles, options.Output);
+        // Merged into a staging file beside the output and moved into place only when complete, so a failure
+        // never leaves a truncated output (or a destroyed input, when both paths are the same).
+        var staging = $"{options.Output}.{runTag}.tmp";
+
+        try
+        {
+            var lines = MergeFiles(runFiles, staging);
+            File.Move(staging, options.Output, overwrite: true);
+            return lines;
+        }
+        finally
+        {
+            DeleteTempFiles([staging]);
+        }
     }
 
     static long MergeFiles(IReadOnlyList<string> inputs, string outputPath)
@@ -209,7 +235,7 @@ sealed class ExternalSorter(SorterOptions options)
 
             for (var i = 0; i < inputs.Count; i++)
             {
-                readers.Add(new StreamReader(inputs[i], Utf8NoBom, detectEncodingFromByteOrderMarks: false, BufferSize));
+                readers.Add(OpenSequentialReader(inputs[i], detectEncodingFromByteOrderMarks: false));
 
                 if (TryReadRecord(readers[i], inputs[i], out var record))
                 {
@@ -219,14 +245,18 @@ sealed class ExternalSorter(SorterOptions options)
 
             long lines = 0;
 
-            while (queue.TryDequeue(out var item, out _))
+            while (queue.TryPeek(out var item, out _))
             {
                 WriteRecord(writer, item.Record);
                 lines++;
 
                 if (TryReadRecord(readers[item.Run], inputs[item.Run], out var next))
                 {
-                    queue.Enqueue((next, item.Run), next);
+                    queue.DequeueEnqueue((next, item.Run), next);
+                }
+                else
+                {
+                    queue.Dequeue();
                 }
             }
 
@@ -240,6 +270,12 @@ sealed class ExternalSorter(SorterOptions options)
             }
         }
     }
+
+    // SequentialScan hints the OS to read ahead. The FileStream is unbuffered (bufferSize 1) because StreamReader
+    // already buffers; the path-based StreamReader constructor sets neither.
+    static StreamReader OpenSequentialReader(string path, bool detectEncodingFromByteOrderMarks) =>
+        new(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1, FileOptions.SequentialScan),
+            Utf8NoBom, detectEncodingFromByteOrderMarks, BufferSize);
 
     static bool TryReadRecord(StreamReader reader, string path, out LineRecord record)
     {
@@ -272,17 +308,17 @@ sealed class ExternalSorter(SorterOptions options)
         writer.Write('\n');
     }
 
-    static void DeleteRunFiles(List<string> runFiles)
+    static void DeleteTempFiles(List<string> paths)
     {
-        foreach (var runFile in runFiles)
+        foreach (var path in paths)
         {
             try
             {
-                File.Delete(runFile);
+                File.Delete(path);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                Console.Error.WriteLine($"Could not delete run file '{runFile}': {exception.Message}");
+                Console.Error.WriteLine($"Could not delete temp file '{path}': {exception.Message}");
             }
         }
     }

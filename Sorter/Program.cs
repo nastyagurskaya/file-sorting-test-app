@@ -46,13 +46,19 @@ if (!valid || input is null || output is null)
     return 1;
 }
 
-if (!File.Exists(input))
+SortResult result;
+
+// File-system problems (missing, locked or unwritable files) get a short message; anything else is a bug
+// and keeps its stack trace.
+try
 {
-    Console.Error.WriteLine($"Input file not found: {input}");
+    result = new ExternalSorter(new SorterOptions(input, output, temp, chunkSize, workers, mergeFactor)).Sort();
+}
+catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+{
+    Console.Error.WriteLine($"Sort failed: {exception.Message}");
     return 1;
 }
-
-var result = new ExternalSorter(new SorterOptions(input, output, temp, chunkSize, workers, mergeFactor)).Sort();
 Console.WriteLine($"Sorted {result.LinesWritten:N0} lines from {result.RunCount:N0} runs ({result.MergePasses} intermediate merge passes) to {output} on {workers} workers.");
 
 if (result.LinesSkipped > 0)
