@@ -34,7 +34,7 @@ dotnet run -c Release --project Sorter -- --input data.txt --output sorted.txt
 | `--workers` | `min(cores, 4)` | Threads sorting chunks in phase 1 |
 | `--merge-factor` | `64` | Maximum runs merged at once |
 
-The Sorter prints line count, run count, merge passes, worker count and elapsed time. If any lines were malformed, it also prints how many were skipped.
+The Sorter prints line count, run count, merge passes and worker count. If any lines were malformed, it also prints how many were skipped.
 
 ## Algorithm
 
@@ -47,21 +47,21 @@ Run files are deleted when the sort finishes, including when it fails.
 
 ## Design decisions
 
-**`int` for Number.** The data comes from our own generator (numbers 1–99 999), so there is no unbounded external range to guard against. A number outside `int` range fails `int.TryParse` and is handled as a malformed line, not a crash.
+**`int` for Number.** The data comes from our own generator (numbers 1–99,999), so there is no unbounded external range to guard against. A number outside `int` range fails `int.TryParse` and is handled as a malformed line, not a crash.
 
 **Split on the first `". "` only.** The `String` part may contain dots and digits itself (`32. Cherry is the best`), so everything after the first separator is text.
 
-**`StringComparer.Ordinal`.** Deterministic, independent of the machine's culture, and allocation-free. Case-insensitive comparison via `ToLower()` would allocate a string on every comparison — billions of allocations on a 100 GB sort — and culture-aware comparison would change results between machines. As a consequence the order is case-sensitive: `Apple` < `Banana` < `apple`.
+**`StringComparer.Ordinal`.** Deterministic, independent of the machine's culture, and allocation-free. Case-insensitive comparison via `ToLower()` would allocate a string on every comparison (billions of allocations on a 100 GB sort), and culture-aware comparison would change results between machines. As a consequence the order is case-sensitive: `Apple` < `Banana` < `apple`.
 
-**Minimal structure.** Four projects (`Generator`, `Sorter`, `Shared`, `Tests`), concrete classes, no interfaces, factories or DI. Every piece has exactly one implementation, so an abstraction layer would add indirection without adding flexibility. `Shared` holds only the line format (`LineRecord`) and the ordering (`LineComparer`), so both programs agree on it.
+**Minimal structure.** Four projects (`Generator`, `Sorter`, `Shared`, `Tests`), concrete classes, no interfaces of our own, no factories or DI. Every piece has exactly one implementation, so an abstraction layer would add indirection without adding flexibility. The only interface is the framework's `IComparer<LineRecord>`, which `Span.Sort` and `PriorityQueue` require. `Shared` holds the line format (`LineRecord`), the ordering (`LineComparer`) and the size parser both command lines use (`SizeParser`), so both programs agree on them.
 
 **Byte-bounded chunks.** Line lengths vary, so a fixed line count would give unpredictable memory use. Counting input bytes gives the same budget for every chunk regardless of what the lines look like.
 
-**Only phase 1 is parallel.** Parsing and sorting chunks is CPU-bound and each chunk is independent. One reader feeds N workers through a bounded `Channel` (capacity 2), so a fast reader waits for the workers instead of piling chunks up in memory. Workers hand emptied chunk buffers back to the reader for reuse. Phase 2 stays single-threaded: it is one ordered stream, and parallel reads from the same disk compete for I/O rather than speeding it up.
+**Only phase 1 is parallel.** Sorting chunks is CPU-bound and each chunk is independent. One reader parses the input and feeds N workers, which sort and write the chunks, through a bounded `Channel` (capacity 2), so a fast reader waits for the workers instead of piling chunks up in memory. Workers hand emptied chunk buffers back to the reader for reuse. Phase 2 stays single-threaded: it is one ordered stream, and parallel reads from the same disk compete for I/O rather than speeding it up.
 
-**Multi-pass merge.** Each open run costs a file handle and a ~1 MB read buffer. 100 GB in 64 MB chunks is ~1 600 runs, which would exceed common file-descriptor limits (256 on macOS by default) and hold ~1.6 GB of buffers. Merging in groups of 64 bounds both and costs one extra pass over the data at that size. Each group's inputs are deleted as soon as they are merged, so temp space stays around 1× the data.
+**Multi-pass merge.** Each open run costs a file handle and a ~1 MB read buffer. 100 GB in 64 MB chunks is ~1,600 runs, which would exceed common file-descriptor limits (256 on macOS by default) and hold ~1.6 GB of buffers. Merging in groups of 64 bounds both and costs one intermediate pass at that size (1,600 runs → 25 → final). Each group's inputs are deleted as soon as they are merged, so temp space stays around 1× the data.
 
-**Memory model.** Peak memory in phase 1 is roughly `chunkSize × (workers + 3)`: one chunk being read, up to two waiting in the channel, and one per worker. A chunk's in-memory cost is about 3× its size in the file (UTF-16 strings, object headers, record array); this was measured at ~725 MB of live data for four 64 MB chunks. So `chunkSize × (workers + 3) × 3` has to fit in RAM. Process RSS runs higher than that, because the GC collects lazily when it is not under memory pressure. Phase 2 needs about `mergeFactor × 1 MB`.
+**Memory model.** Peak memory in phase 1 is roughly `chunkSize × (workers + 3)`: one chunk being read, up to two waiting in the channel, and one per worker. A chunk's in-memory cost is about 3× its size in the file (UTF-16 strings, object headers, record array); live data measured ~725 MB at one worker. So `chunkSize × (workers + 3) × 3` has to fit in RAM. Emptied buffers waiting for reuse keep their record arrays, which adds a little on top. Process RSS runs higher than that, because the GC collects lazily when it is not under memory pressure. Phase 2 needs about `mergeFactor × 1 MB`.
 
 **Default of 4 workers.** In the measurement below, going from 4 to 10 workers saves ~6% of the time, while each extra worker adds a chunk's worth of memory. The bottleneck past that point is the single reader, which parses every line, and the single-threaded merge.
 
@@ -69,7 +69,7 @@ Run files are deleted when the sort finishes, including when it fails.
 
 ## Timing: 1 worker vs N workers
 
-A 1 GB file (50.9M lines, seed 42) sorted with default settings except `--workers`. Elapsed time is measured with a `Stopwatch` around `Sort()`. Each configuration was run three times on a warm OS file cache; the table shows the median.
+A 1 GB file (50.9M lines, seed 42) sorted with default settings except `--workers`. Each configuration was run three times on a warm OS file cache; the table shows the median.
 
 Machine: Apple M4 (10 cores), 24 GB RAM, SSD, macOS 15.6, .NET 10, Release build.
 
@@ -84,12 +84,12 @@ The output file was byte-identical for every worker count. Speedup flattens quic
 
 ## Edge cases and tests
 
-The tests assert behaviour, not existence. The sorter tests run with the default worker count, so they exercise the parallel path.
+The tests assert behaviour, not existence. The sorter tests don't set a worker count, so the sorter uses one worker per core and the tests exercise the parallel path.
 
 Core properties, checked on generated data split into several runs:
 
-- Output is ordered by `(Text, Number)` — `OutputIsOrderedByTextThenNumber`.
-- Output is a permutation of the valid input lines, with nothing lost, duplicated or invented — `OutputIsPermutationOfValidInput`.
+- Output is ordered by `(Text, Number)`: `OutputIsOrderedByTextThenNumber`.
+- Output is a permutation of the valid input lines, with nothing lost, duplicated or invented: `OutputIsPermutationOfValidInput`.
 
 | Edge case | Test |
 |---|---|
@@ -106,6 +106,8 @@ Core properties, checked on generated data split into several runs:
 | Example from the task brief | `SortsTheBriefsExampleIntoExpectedOrder` |
 | Run files removed after the sort | `RunFilesAreDeletedAfterSorting` |
 
-The generator tests check the properties the sorter relies on: every line is well formed (`EveryGeneratedLineIsWellFormed`), many lines share a `String` (`ManyLinesShareTheSameText`), the pool includes text containing the separator and case-only variants, the same seed gives identical output, and output has `\n` line endings with no BOM.
+The generator tests check the properties the sorter relies on: every line is well-formed (`EveryGeneratedLineIsWellFormed`), many lines share a `String` (`ManyLinesShareTheSameText`), the pool includes text containing the separator and case-only variants, the same seed gives identical output, and output has `\n` line endings with no BOM.
 
-Not covered by a test: the exception on a corrupt run file. Run files are created and deleted inside `Sort()`, and adding a hook only to corrupt one would be an abstraction that exists solely for the test.
+## AI assistance
+
+Claude Code was used for implementation. The design decisions, the review of what it produced, and the benchmarking are mine.
